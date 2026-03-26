@@ -71,5 +71,6 @@ Concorrência de Ficheiros: Embora os métodos de escrita sejam synchronized, a 
 6. Autoria
 Rafael Matias 61847
 João Nunes 61786
+João Ferreira 58191
 
 Disciplina: Segurança e Confiabilidade
