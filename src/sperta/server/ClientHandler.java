@@ -1,5 +1,7 @@
+package sperta.server;
 import java.io.*;
 import java.net.Socket;
+import sperta.common.Protocol;
 
 public class ClientHandler implements Runnable {
     private Socket socket;
@@ -147,11 +149,20 @@ public class ClientHandler implements Runnable {
                         break;
 
                     case Protocol.RT: 
-                        handleFileCommand(tokens, Protocol.RT);
+                        String houseRT = tokens[1];
+                        if(tokens.length < 2){
+                            out.writeObject(Protocol.NOK);
+                        }else{
+                            handleFileCommand(tokens, Protocol.RT);
+                        }
                         break;
 
                     case Protocol.RH:
-                        handleFileCommand(tokens, Protocol.RH);
+                        if (tokens.length < 3) {
+                            out.writeObject(Protocol.NOK);
+                        } else {
+                            handleFileCommand(tokens, Protocol.RH);
+                        }
                         break;
                 }
                 out.flush();
@@ -171,10 +182,10 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            String section = (device != null) ? device.substring(0, 1).toUpperCase() : "all";
+            String section = (device != null) ? device.substring(0, 1).toUpperCase() : null;
 
             
-            if (!DataManager.hasPermission(currentUser, house, section)) {
+            if (!DataManager.hasPermission(house, currentUser, section)) {
                 out.writeObject(Protocol.NOPERM);
                 return;
             }

@@ -1,3 +1,4 @@
+package sperta.server;
 import java.io.File;
 import java.util.Scanner;
 

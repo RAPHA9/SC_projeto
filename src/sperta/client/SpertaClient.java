@@ -1,3 +1,4 @@
+package sperta.client;
 import java.io.*;
 import java.net.*;
 import java.util.Scanner;
@@ -67,20 +68,14 @@ public class SpertaClient {
                     out.flush();
                     
                     Object response = in.readObject();
-                    System.out.println(response); 
+                    String respStr = response.toString();
 
-                    
-
-                    
-                    if (response.toString().startsWith("OK") && 
-                    (command.startsWith("RT") || command.startsWith("RH"))) {
-                        
+                    if (respStr.equals("OK") && (command.startsWith("RT") || command.startsWith("RH"))) {
                         String localFileName = command.startsWith("RH") ? "historico.csv" : "estado_casa.txt";
-                        receiveFile(in, localFileName);
+                        receiveFile(in, localFileName, respStr);
+                    } else {
+                        System.out.println(respStr); 
                     }
-                    
-                } else {
-                    System.out.println("Erro na sintaxe do comando. Digite HELP para ajuda.");
                 }
             }
 
@@ -89,7 +84,7 @@ public class SpertaClient {
         }
     }
 
-    private static void receiveFile(ObjectInputStream in, String fileName) throws Exception {
+    private static void receiveFile(ObjectInputStream in, String fileName, String status) throws Exception {
         long fileSize = (long) in.readObject();
         
        
@@ -102,7 +97,7 @@ public class SpertaClient {
                 fos.write(buffer, 0, read);
                 totalRead += read;
             }
-            System.out.println("OK, " + totalRead + " , seguido de "+fileSize+" bytes de dados.");
+            System.out.println(status + ", " + fileSize + " (long), seguido de " + totalRead + " bytes de dados.");
         }
     }
 }

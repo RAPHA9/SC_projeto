@@ -1,7 +1,9 @@
+package sperta.server;
 import java.io.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import sperta.common.Protocol;
 
 public class DataManager {
     private static final String DATA_PATH = "server_data/";
@@ -37,24 +39,31 @@ public class DataManager {
 
    
     public static synchronized String createHouse(String houseName, String owner) {
-        if (houseExists(houseName)) return "NOK"; 
-
         try {
-           
-            PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(HOUSES_FILE, true)));
-            out.println(houseName + ";owner:" + owner + ";perms:");
-            out.close();
+            if (houseExists(houseName)) {
+                return Protocol.NOK;
+            }
 
            
-            PrintWriter outCount = new PrintWriter(new BufferedWriter(new FileWriter(COUNTERS_FILE, true)));
-            outCount.println(houseName + ":M:1:L:1:P:1:G:1:S:1:E:1");
-            outCount.close();
+            try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(HOUSES_FILE, true)))) {
+                out.println(houseName + ";owner:" + owner + ";perms:");
+            }
 
-           
-            new File(LOGS_PATH + houseName).mkdirs();
             
-            return "OK";
-        } catch (IOException e) { return "NOK"; }
+            try (PrintWriter outCount = new PrintWriter(new BufferedWriter(new FileWriter(COUNTERS_FILE, true)))) {
+                outCount.println(houseName + ":M:1:L:1:P:1:G:1:S:1:E:1");
+            }
+
+           
+            File logsDir = new File(LOGS_PATH + houseName);
+            logsDir.mkdirs();
+
+            return Protocol.OK;
+
+        } catch (Exception e) { 
+            e.printStackTrace(); 
+            return Protocol.NOK; 
+        }
     }
 
     
@@ -92,7 +101,7 @@ public class DataManager {
             }
             sc.close();
 
-            if (!houseFound) return "NOHM";
+            if (!houseFound) return Protocol.NOHM;
 
             
             PrintWriter pw = new PrintWriter(new FileWriter(COUNTERS_FILE));
@@ -127,7 +136,7 @@ public class DataManager {
     public static synchronized String updateDeviceState(String house, String device, int value, String user) {
         
         String section = String.valueOf(device.charAt(0));
-        if (!hasPermission(user, house, section)) return "NOPERM";
+        if (!hasPermission(house, user, section)) return "NOPERM";
 
         try {
             
@@ -145,23 +154,34 @@ public class DataManager {
         } catch (IOException e) { return "NOK"; }
     }
 
-    public static synchronized boolean hasPermission(String user, String house, String section) {
+    public static synchronized boolean hasPermission(String house, String user, String section) {
         if (isOwner(house, user)) return true;
 
-        try (Scanner sc = new Scanner(new File(HOUSES_FILE))) {
+        File f = new File(HOUSES_FILE);
+        try (Scanner sc = new Scanner(f)) {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 if (line.startsWith(house + ";")) {
                     String[] parts = line.split(";");
-                    for (String part : parts) {
-                        if (part.startsWith(user + ":")) {
-                            String permissions = part.split(":")[1];
-                            return permissions.contains("all") || permissions.contains(section);
+                    for (int i = 2; i < parts.length; i++) {
+                        String p = parts[i]; 
+                        if (p.contains(":")) {
+                            String[] pair = p.split(":");
+                            if (pair.length < 2) continue;
+                            String u = pair[0].trim();
+                            String s = pair[1].trim();
+
+                            if (u.equals(user)) {
+                                
+                                if (section == null || s.equals(section)) {
+                                    return true;
+                                }
+                            }
                         }
                     }
                 }
             }
-        } catch (IOException e) { return false; }
+        } catch (Exception e) { return false; }
         return false;
     }
 
@@ -185,44 +205,65 @@ public class DataManager {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 if (line.startsWith(houseName + ";")) {
-                    return line.contains("owner:" + userId + ";");
+                    String[] parts = line.split(";");
+                    if (parts.length > 1) {
+                        
+                        String actualOwner = parts[1].replace("owner:", "").trim();
+                        return actualOwner.equals(userId);
+                    }
                 }
             }
-        } catch (FileNotFoundException e) {
-            return false;
-        }
+        } catch (IOException e) { return false; }
         return false;
     }
 
-    public static synchronized String addPermission(String admin, String targetUser, String house, String section) {
-        if (!houseExists(house)) return Protocol.NOHM;
-        if (!isOwner(house, admin)) return Protocol.NOPERM; 
-        if (!userExists(targetUser)) return Protocol.NOUSER;
-
+    public static synchronized String addPermission(String owner, String targetUser, String house, String section) {
+        if (!isOwner(house, owner)) return Protocol.NOPERM;
+        
         List<String> lines = new ArrayList<>();
-        try (Scanner sc = new Scanner(new File(HOUSES_FILE))) {
-            while (sc.hasNextLine()) {
-                String line = sc.nextLine();
-                if (line.startsWith(house + ";")) {
-                   
-                    if (!line.endsWith(";")) line += ";";
-                    line += targetUser + ":" + section + ";";
+        boolean houseFound = false;
+        String targetPerm = targetUser + ":" + section;
+        
+        try {
+            File f = new File(HOUSES_FILE);
+            if (!f.exists()) return Protocol.NOHM;
+
+            try (Scanner sc = new Scanner(f)) {
+                while (sc.hasNextLine()) {
+                    String line = sc.nextLine();
+                    if (line.startsWith(house + ";")) {
+                        houseFound = true;
+                        
+                        String[] parts = line.split(";");
+                        boolean permExists = false;
+                        for (String part : parts) {
+                            if (part.equals(targetPerm)) {
+                                permExists = true;
+                                break;
+                            }
+                        }
+
+                        if (!permExists) {
+                            if (!line.endsWith(";")) line += ";";
+                            line += targetPerm + ";";
+                        }
+                    }
+                    lines.add(line);
                 }
-                lines.add(line);
             }
-            
-            try (PrintWriter pw = new PrintWriter(new FileWriter(HOUSES_FILE))) {
-                for (String l : lines) pw.println(l);
+
+            if (!houseFound) return Protocol.NOHM;
+
+            try (PrintWriter out = new PrintWriter(new FileWriter(HOUSES_FILE))) {
+                for (String l : lines) out.println(l);
             }
-            return Protocol.OK; 
-        } catch (IOException e) {
-            return Protocol.NOK;
+            return Protocol.OK;
+        } catch (IOException e) { 
+            return Protocol.NOK; 
         }
     }
 
-    /**
-     * Retorna o ficheiro solicitado (log ou estados) após validar permissões.
-     */
+    
     public static synchronized File getFileForCommand(String user, String house, String device, String type) {
        
         if (!houseExists(house)) return null; 
@@ -231,7 +272,7 @@ public class DataManager {
         if (type.equals("RH")) {
            
             String section = String.valueOf(device.charAt(0));
-            if (!hasPermission(user, house, section)) return null;
+            if (!hasPermission(house, user, section)) return null;
 
             File logFile = new File(LOGS_PATH + house + "/" + device + ".csv");
             return logFile.exists() ? logFile : null; 
@@ -270,7 +311,7 @@ public class DataManager {
                         String value = parts[i+1];
                         String section = String.valueOf(deviceId.charAt(0));
 
-                        if (hasPermission(user, house, section)) {
+                        if (hasPermission(house, user, section)) {
                             writer.println(deviceId + ":" + value);
                             foundData = true;
                         }

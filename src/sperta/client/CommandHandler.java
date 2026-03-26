@@ -1,3 +1,5 @@
+package sperta.client;
+import sperta.common.Protocol;
 
 public class CommandHandler {
 
@@ -9,17 +11,17 @@ public class CommandHandler {
         String cmd = tokens[0].toUpperCase();
 
         switch (cmd) {
-            case Protocol.CREATE: // CREATE <hm>
+            case Protocol.CREATE: 
                 return tokens.length == 2;
-            case Protocol.ADD:    // ADD <user1> <hm> <s>
+            case Protocol.ADD:
                 return tokens.length == 4;
-            case Protocol.RD:     // RD <hm> <s>
+            case Protocol.RD: 
                 return tokens.length == 3;
-            case Protocol.EC:     // EC <hm> <d> <int>
+            case Protocol.EC:
                 return tokens.length == 4;
-            case Protocol.RT:     // RT <hm>
+            case Protocol.RT:
                 return tokens.length == 2;
-            case Protocol.RH:     // RH <hm> <d>
+            case Protocol.RH:
                 return tokens.length == 3;
             default:
                 System.out.println("Comando desconhecido: " + cmd);
@@ -36,7 +38,7 @@ public class CommandHandler {
         System.out.println("EC <hm> <d> <int>   # Enviar valor de estado/temporização");
         System.out.println("RT <hm>             # Receber informação sobre último comando");
         System.out.println("RH <hm> <d>         # Receber o Histórico (log.csv)");
-        System.out.println("HELP                # Mostrar este menu");
+        System.out.println("HELP                # Mostrar este menu de ajuda");
         System.out.println("EXIT                # Sair da aplicação\n");
     }
 }

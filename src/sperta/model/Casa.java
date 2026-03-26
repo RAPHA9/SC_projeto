@@ -1,3 +1,4 @@
+package sperta.model;
 import java.io.Serializable;
 import java.util.*;
 
