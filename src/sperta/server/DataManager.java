@@ -186,6 +186,7 @@ public class DataManager {
     
     public static synchronized boolean deviceExists(String house, String device) {
         if (device == null) return false;
+        
         String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
         String folderName = SECTION_MAP.get(sectionLetter);
         if (folderName == null) return false;

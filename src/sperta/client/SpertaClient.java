@@ -70,8 +70,9 @@ public class SpertaClient {
                     Object response = in.readObject();
                     String respStr = response.toString();
 
-                    if (respStr.equals("OK") && (command.startsWith("RT") || command.startsWith("RH"))) {
-                        String localFileName = command.startsWith("RH") ? "historico.csv" : "estado_casa.txt";
+                   
+                    if (respStr.equals("OK") && (command.toUpperCase().startsWith("RT") || command.toUpperCase().startsWith("RH"))) {
+                        String localFileName = command.toUpperCase().startsWith("RH") ? "historico.csv" : "estado_casa.txt";
                         receiveFile(in, localFileName, respStr);
                     } else {
                         System.out.println(respStr); 
