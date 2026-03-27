@@ -322,7 +322,6 @@ public class DataManager {
     public static synchronized File getFileForCommand(String user, String house, String device, String type) {
         if (!houseExists(house)) return null; 
 
-        // Caso seja um pedido de Histórico (RH)
         if (type.equals(Protocol.RH)) {
             String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
             String folderName = SECTION_MAP.get(sectionLetter);
@@ -330,12 +329,10 @@ public class DataManager {
             if (folderName == null) return null;
             if (!hasPermission(house, user, sectionLetter)) return null;
 
-            // Procurar o ficheiro na pasta da secção correspondente
             File logFile = new File(HOUSES_ROOT + house + "/" + folderName + "/" + device + ".csv");
             return logFile.exists() ? logFile : null; 
         }
 
-        // Caso seja um pedido de Estado Total (RT)
         if (type.equals(Protocol.RT)) {
             if (hasAnyPermissionInHouse(user, house)) {
                 return generateFilteredStatesFile(user, house);
