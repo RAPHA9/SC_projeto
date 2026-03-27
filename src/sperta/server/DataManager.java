@@ -13,10 +13,10 @@ public class DataManager {
     private static final String COUNTERS_FILE = DATA_PATH + "contadores.txt";
     private static final String STATES_FILE = DATA_PATH + "estados.txt";
 
-    // No DataManager.java
+    
     private static final String HOUSES_ROOT = DATA_PATH + "houses/";
 
-    // Mapeamento de Letras para Pastas da Figura 2
+   
     private static final Map<String, String> SECTION_MAP = Map.of(
         "E", "Electros",
         "G", "Garden",
@@ -55,7 +55,7 @@ public class DataManager {
         try {
             if (houseExists(houseName)) return Protocol.NOK;
 
-            // 1. Criar estrutura física de pastas (Figura 2)
+           
             File houseDir = new File(HOUSES_ROOT + houseName);
             houseDir.mkdirs();
 
@@ -63,7 +63,7 @@ public class DataManager {
                 File sectionDir = new File(houseDir, folderName);
                 sectionDir.mkdir();
                 
-                // Criar e iniciar o contador da seção a 1
+              
                 File counterFile = new File(sectionDir, "counter.txt");
                 try (PrintWriter pw = new PrintWriter(counterFile)) {
                     pw.print("1");
@@ -87,7 +87,7 @@ public class DataManager {
     
     public static synchronized String registerDevice(String houseName, String sectionLetter) {
         String folderName = SECTION_MAP.get(sectionLetter.toUpperCase());
-        if (folderName == null) return Protocol.NOK; // Secção inválida
+        if (folderName == null) return Protocol.NOK; 
 
         File counterFile = new File(HOUSES_ROOT + houseName + "/" + folderName + "/counter.txt");
         File globalCountersFile = new File(COUNTERS_FILE);
@@ -97,13 +97,13 @@ public class DataManager {
         if (!counterFile.exists()) return Protocol.NOHM;
 
         try {
-            // 1. Ler o contador atual
+           
             int currentCount;
             try (Scanner sc = new Scanner(counterFile)) {
                 currentCount = sc.hasNextInt() ? sc.nextInt() : 1;
             }
 
-            // 2. Incrementar e salvar o novo contador
+          
             try (PrintWriter pw = new PrintWriter(counterFile)) {
                 pw.print(currentCount + 1);
             }
@@ -165,14 +165,14 @@ public class DataManager {
 
     
     public static synchronized String updateDeviceState(String house, String device, int value, String user) {
-        // 1. Validar a casa
+        
         if (!houseExists(house)) return Protocol.NOHM;
 
-        // 2. Extrair a letra da secção (ex: 'L' de 'L1')
+        
         String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
         String folderName = SECTION_MAP.get(sectionLetter);
         
-        // 3. Validar permissões e existência da secção
+       
         if (folderName == null) return Protocol.NOD;
         if (!hasPermission(house, user, sectionLetter)) return Protocol.NOPERM;
         if (!deviceExists(house, device)) return Protocol.NOD;
@@ -182,14 +182,14 @@ public class DataManager {
             String logEntry = String.format("%s, %d", 
                 LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")), value);
             
-            // CAMINHO FIGURA 2: houses/NomeCasa/NomeSeccao/Dispositivo.csv
+            
             File logFile = new File(HOUSES_ROOT + house + "/" + folderName + "/" + device + ".csv");
 
             try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(logFile, true)))) {
                 out.println(logEntry);
             }
 
-            // Atualizar o ficheiro global de estados (para o comando RT)
+            
             updateStatesFile(house, device, value);
 
             return Protocol.OK;
