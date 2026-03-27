@@ -181,7 +181,7 @@ public class ClientHandler implements Runnable {
                 out.writeObject(Protocol.NOHM);
                 return;
             }
-            if(!DataManager.deviceExists(house, device)){
+            if(device != null && !DataManager.deviceExists(house, device)){
                 out.writeObject(Protocol.NOD);
                 return;
             }

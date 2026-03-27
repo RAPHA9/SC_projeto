@@ -151,6 +151,7 @@ public class DataManager {
 
     
     public static synchronized boolean deviceExists(String house, String device) {
+        if (device == null) return false;
         String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
         String folderName = SECTION_MAP.get(sectionLetter);
         if (folderName == null) return false;
@@ -159,8 +160,10 @@ public class DataManager {
         try (Scanner sc = new Scanner(counterFile)) {
             int nextId = sc.nextInt();
             int deviceNum = Integer.parseInt(device.substring(1));
-            return deviceNum > 0 && deviceNum < nextId;
-        } catch (Exception e) { return false; }
+            return deviceNum > 0 && deviceNum <= nextId;
+        } catch (Exception e) { 
+            return false; 
+        }
     }
 
     
