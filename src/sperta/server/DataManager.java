@@ -12,6 +12,19 @@ public class DataManager {
     private static final String HOUSES_FILE = DATA_PATH + "casas.txt";
     private static final String COUNTERS_FILE = DATA_PATH + "contadores.txt";
     private static final String STATES_FILE = DATA_PATH + "estados.txt";
+
+    // No DataManager.java
+    private static final String HOUSES_ROOT = DATA_PATH + "houses/";
+
+    // Mapeamento de Letras para Pastas da Figura 2
+    private static final Map<String, String> SECTION_MAP = Map.of(
+        "E", "Electros",
+        "G", "Garden",
+        "L", "Luzes",
+        "M", "Multimedia",
+        "P", "Portas",
+        "S", "Stores"
+    );
     
 
     public static synchronized String authenticateOrRegister(String userId, String password) {
@@ -40,77 +53,86 @@ public class DataManager {
    
     public static synchronized String createHouse(String houseName, String owner) {
         try {
-            if (houseExists(houseName)) {
-                return Protocol.NOK;
+            if (houseExists(houseName)) return Protocol.NOK;
+
+            // 1. Criar estrutura física de pastas (Figura 2)
+            File houseDir = new File(HOUSES_ROOT + houseName);
+            houseDir.mkdirs();
+
+            for (String folderName : SECTION_MAP.values()) {
+                File sectionDir = new File(houseDir, folderName);
+                sectionDir.mkdir();
+                
+                // Criar e iniciar o contador da seção a 1
+                File counterFile = new File(sectionDir, "counter.txt");
+                try (PrintWriter pw = new PrintWriter(counterFile)) {
+                    pw.print("1");
+                }
             }
 
-           
             try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(HOUSES_FILE, true)))) {
-                out.println(houseName + ";owner:" + owner + ";perms:");
+                out.println(houseName + ";owner:" + owner + ";perms:;");
             }
 
-            
             try (PrintWriter outCount = new PrintWriter(new BufferedWriter(new FileWriter(COUNTERS_FILE, true)))) {
-                outCount.println(houseName + ":M:1:L:1:P:1:G:1:S:1:E:1");
+                outCount.println(houseName + ":E:1:G:1:L:1:M:1:P:1:S:1");
             }
-
-           
-            File logsDir = new File(LOGS_PATH + houseName);
-            logsDir.mkdirs();
 
             return Protocol.OK;
-
-        } catch (Exception e) { 
-            e.printStackTrace(); 
-            return Protocol.NOK; 
+        } catch (IOException e) {
+            return Protocol.NOK;
         }
     }
 
     
-    public static synchronized String registerDevice(String houseName, String section) {
-        File file = new File(COUNTERS_FILE);
+    public static synchronized String registerDevice(String houseName, String sectionLetter) {
+        String folderName = SECTION_MAP.get(sectionLetter.toUpperCase());
+        if (folderName == null) return Protocol.NOK; // Secção inválida
+
+        File counterFile = new File(HOUSES_ROOT + houseName + "/" + folderName + "/counter.txt");
+        File globalCountersFile = new File(COUNTERS_FILE);
         List<String> lines = new ArrayList<>();
-        String newDeviceId = "";
         boolean houseFound = false;
+        
+        if (!counterFile.exists()) return Protocol.NOHM;
 
         try {
-            if (!file.exists()) return "NOHM";
+            // 1. Ler o contador atual
+            int currentCount;
+            try (Scanner sc = new Scanner(counterFile)) {
+                currentCount = sc.hasNextInt() ? sc.nextInt() : 1;
+            }
 
-            Scanner sc = new Scanner(file);
-            while (sc.hasNextLine()) {
-                String line = sc.nextLine();
-               
-                if (line.startsWith(houseName + ":")) {
-                    houseFound = true;
-                    String[] parts = line.split(":");
-                    StringBuilder newLine = new StringBuilder(parts[0]);
-                    
-                    for (int i = 1; i < parts.length; i += 2) {
-                        if (parts[i].equals(section)) {
-                            int currentCount = Integer.parseInt(parts[i+1]);
-                            newDeviceId = section + currentCount; 
-                            newLine.append(":").append(parts[i]).append(":").append(currentCount + 1);
-                        } else {
-                            newLine.append(":").append(parts[i]).append(":").append(parts[i+1]);
+            // 2. Incrementar e salvar o novo contador
+            try (PrintWriter pw = new PrintWriter(counterFile)) {
+                pw.print(currentCount + 1);
+            }
+
+            try (Scanner sc = new Scanner(globalCountersFile)) {
+                while (sc.hasNextLine()) {
+                    String line = sc.nextLine();
+                    if (line.startsWith(houseName + ":")) {
+                        houseFound = true;
+                        String[] parts = line.split(":");
+                        StringBuilder newLine = new StringBuilder(parts[0]);
+                        
+                        for (int i = 1; i < parts.length; i += 2) {
+                            if (parts[i].equals(sectionLetter)) {
+                                newLine.append(":").append(parts[i]).append(":").append(currentCount + 1);
+                            } else {
+                                newLine.append(":").append(parts[i]).append(":").append(parts[i+1]);
+                            }
                         }
+                        lines.add(newLine.toString());
+                    } else {
+                        lines.add(line);
                     }
-                    lines.add(newLine.toString());
-                } else {
-                    lines.add(line);
                 }
             }
-            sc.close();
 
-            if (!houseFound) return Protocol.NOHM;
-
-            
-            PrintWriter pw = new PrintWriter(new FileWriter(COUNTERS_FILE));
-            for (String l : lines) pw.println(l);
-            pw.close();
-
-            return "OK"; 
+            return Protocol.OK; 
         } catch (IOException e) {
-            return "NOK";
+            return Protocol.NOK;
         }
     }
 
@@ -123,79 +145,57 @@ public class DataManager {
         return false;
     }
 
-    public static synchronized boolean houseExists(String name) {
-        try (Scanner sc = new Scanner(new File(HOUSES_FILE))) {
-            while (sc.hasNextLine()) {
-                if (sc.nextLine().startsWith(name + ";")) return true;
-            }
-        } catch (IOException e) { return false; }
-        return false;
+    public static boolean houseExists(String name) {
+        return new File(HOUSES_ROOT + name).exists();
     }
 
-    /**
-     * Verifica se um dispositivo (ex: B3) foi registado na casa.
-     */
+    
     public static synchronized boolean deviceExists(String house, String device) {
-        if (device == null || device.length() < 2) return false;
-        
-        String section = String.valueOf(device.charAt(0));
-        int deviceNum;
-        try {
-            deviceNum = Integer.parseInt(device.substring(1));
-        } catch (NumberFormatException e) {
-            return false;
-        }
+        String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
+        String folderName = SECTION_MAP.get(sectionLetter);
+        if (folderName == null) return false;
 
-        try (Scanner sc = new Scanner(new File(COUNTERS_FILE))) {
-            while (sc.hasNextLine()) {
-                String line = sc.nextLine();
-                if (line.startsWith(house + ":")) {
-                    String[] parts = line.split(":");
-                    // O formato é casa:S1:C1:S2:C2...
-                    for (int i = 1; i < parts.length; i += 2) {
-                        if (parts[i].equals(section)) {
-                            int nextId = Integer.parseInt(parts[i+1]);
-                            // Se o contador for 4, os IDs registados são 1, 2 e 3.
-                            return deviceNum > 0 && deviceNum < nextId;
-                        }
-                    }
-                }
-            }
-        } catch (IOException e) {
-            return false;
-        }
-        return false;
+        File counterFile = new File(HOUSES_ROOT + house + "/" + folderName + "/counter.txt");
+        try (Scanner sc = new Scanner(counterFile)) {
+            int nextId = sc.nextInt();
+            int deviceNum = Integer.parseInt(device.substring(1));
+            return deviceNum > 0 && deviceNum < nextId;
+        } catch (Exception e) { return false; }
     }
 
     
     public static synchronized String updateDeviceState(String house, String device, int value, String user) {
+        // 1. Validar a casa
+        if (!houseExists(house)) return Protocol.NOHM;
+
+        // 2. Extrair a letra da secção (ex: 'L' de 'L1')
+        String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
+        String folderName = SECTION_MAP.get(sectionLetter);
         
-        String section = String.valueOf(device.charAt(0));
-        
-        if (!hasPermission(house, user, section)) {
-            return "NOPERM";
-        }
-        if(!houseExists(house)){
-            return Protocol.NOHM;
-        }
-        if(!deviceExists(house, device)){
-            return Protocol.NOD;
-        }
+        // 3. Validar permissões e existência da secção
+        if (folderName == null) return Protocol.NOD;
+        if (!hasPermission(house, user, sectionLetter)) return Protocol.NOPERM;
+        if (!deviceExists(house, device)) return Protocol.NOD;
 
         try {
             
             String logEntry = String.format("%s, %d", 
                 LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")), value);
-            File logFile = new File(LOGS_PATH + house + "/" + device + ".csv");
+            
+            // CAMINHO FIGURA 2: houses/NomeCasa/NomeSeccao/Dispositivo.csv
+            File logFile = new File(HOUSES_ROOT + house + "/" + folderName + "/" + device + ".csv");
+
             try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(logFile, true)))) {
                 out.println(logEntry);
             }
 
-            
+            // Atualizar o ficheiro global de estados (para o comando RT)
             updateStatesFile(house, device, value);
 
-            return "OK";
-        } catch (IOException e) { return "NOK"; }
+            return Protocol.OK;
+        } catch (IOException e) { 
+            return Protocol.NOK; 
+        }
     }
 
     public static synchronized boolean hasPermission(String house, String user, String section) {
@@ -317,22 +317,24 @@ public class DataManager {
 
     
     public static synchronized File getFileForCommand(String user, String house, String device, String type) {
-       
         if (!houseExists(house)) return null; 
 
-       
-        if (type.equals("RH")) {
-           
-            String section = String.valueOf(device.charAt(0));
-            if (!hasPermission(house, user, section)) return null;
+        // Caso seja um pedido de Histórico (RH)
+        if (type.equals(Protocol.RH)) {
+            String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
+            String folderName = SECTION_MAP.get(sectionLetter);
 
-            File logFile = new File(LOGS_PATH + house + "/" + device + ".csv");
+            if (folderName == null) return null;
+            if (!hasPermission(house, user, sectionLetter)) return null;
+
+            // Procurar o ficheiro na pasta da secção correspondente
+            File logFile = new File(HOUSES_ROOT + house + "/" + folderName + "/" + device + ".csv");
             return logFile.exists() ? logFile : null; 
         }
 
-       
-        if (type.equals("RT")) {
-            if (isOwner(house, user) || hasAnyPermissionInHouse(user, house)) {
+        // Caso seja um pedido de Estado Total (RT)
+        if (type.equals(Protocol.RT)) {
+            if (hasAnyPermissionInHouse(user, house)) {
                 return generateFilteredStatesFile(user, house);
             }
         }
