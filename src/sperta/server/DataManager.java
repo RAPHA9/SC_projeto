@@ -132,11 +132,55 @@ public class DataManager {
         return false;
     }
 
+    /**
+     * Verifica se um dispositivo (ex: B3) foi registado na casa.
+     */
+    public static synchronized boolean deviceExists(String house, String device) {
+        if (device == null || device.length() < 2) return false;
+        
+        String section = String.valueOf(device.charAt(0));
+        int deviceNum;
+        try {
+            deviceNum = Integer.parseInt(device.substring(1));
+        } catch (NumberFormatException e) {
+            return false;
+        }
+
+        try (Scanner sc = new Scanner(new File(COUNTERS_FILE))) {
+            while (sc.hasNextLine()) {
+                String line = sc.nextLine();
+                if (line.startsWith(house + ":")) {
+                    String[] parts = line.split(":");
+                    // O formato é casa:S1:C1:S2:C2...
+                    for (int i = 1; i < parts.length; i += 2) {
+                        if (parts[i].equals(section)) {
+                            int nextId = Integer.parseInt(parts[i+1]);
+                            // Se o contador for 4, os IDs registados são 1, 2 e 3.
+                            return deviceNum > 0 && deviceNum < nextId;
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            return false;
+        }
+        return false;
+    }
+
     
     public static synchronized String updateDeviceState(String house, String device, int value, String user) {
         
         String section = String.valueOf(device.charAt(0));
-        if (!hasPermission(house, user, section)) return "NOPERM";
+        
+        if (!hasPermission(house, user, section)) {
+            return "NOPERM";
+        }
+        if(!houseExists(house)){
+            return Protocol.NOHM;
+        }
+        if(!deviceExists(house, device)){
+            return Protocol.NOD;
+        }
 
         try {
             
@@ -218,7 +262,15 @@ public class DataManager {
     }
 
     public static synchronized String addPermission(String owner, String targetUser, String house, String section) {
-        if (!isOwner(house, owner)) return Protocol.NOPERM;
+        if(!houseExists(house)){
+            return Protocol.NOHM;
+        }
+        if(!userExists(targetUser)){
+            return Protocol.NOUSER;
+        }
+        if (!isOwner(house, owner)) {
+            return Protocol.NOPERM;
+        }
         
         List<String> lines = new ArrayList<>();
         boolean houseFound = false;

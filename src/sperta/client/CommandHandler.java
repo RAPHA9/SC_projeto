@@ -24,7 +24,7 @@ public class CommandHandler {
             case Protocol.RH:
                 return tokens.length == 3;
             default:
-                System.out.println("Comando desconhecido: " + cmd);
+                System.out.println("Comando desconhecido");
                 return false;
         }
     }

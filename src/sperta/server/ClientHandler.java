@@ -181,6 +181,10 @@ public class ClientHandler implements Runnable {
                 out.writeObject(Protocol.NOHM);
                 return;
             }
+            if(!DataManager.deviceExists(house, device)){
+                out.writeObject(Protocol.NOD);
+                return;
+            }
 
             String section = (device != null) ? device.substring(0, 1).toUpperCase() : null;
 
