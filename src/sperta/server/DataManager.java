@@ -71,7 +71,7 @@ public class DataManager {
             }
 
             try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(HOUSES_FILE, true)))) {
-                out.println(houseName + ";owner:" + owner + ";perms:;");
+                out.println(houseName + ";owner:" + owner + ";perms:;dispositivos:;");
             }
 
             try (PrintWriter outCount = new PrintWriter(new BufferedWriter(new FileWriter(COUNTERS_FILE, true)))) {
@@ -86,53 +86,84 @@ public class DataManager {
 
     
     public static synchronized String registerDevice(String houseName, String sectionLetter) {
-        String folderName = SECTION_MAP.get(sectionLetter.toUpperCase());
+        // 1. Validar a secção e obter a pasta correspondente
+        String sectionUpper = sectionLetter.toUpperCase();
+        String folderName = SECTION_MAP.get(sectionUpper);
         if (folderName == null) return Protocol.NOK; 
 
         File counterFile = new File(HOUSES_ROOT + houseName + "/" + folderName + "/counter.txt");
         File globalCountersFile = new File(COUNTERS_FILE);
-        List<String> lines = new ArrayList<>();
-        boolean houseFound = false;
         
         if (!counterFile.exists()) return Protocol.NOHM;
 
         try {
-           
+            // 2. Ler o contador local e gerar o novo ID (ex: L1)
             int currentCount;
             try (Scanner sc = new Scanner(counterFile)) {
                 currentCount = sc.hasNextInt() ? sc.nextInt() : 1;
             }
+            String newDeviceId = sectionUpper + currentCount;
 
-          
+            // 3. Incrementar e guardar o contador local
             try (PrintWriter pw = new PrintWriter(counterFile)) {
                 pw.print(currentCount + 1);
             }
 
-            try (Scanner sc = new Scanner(globalCountersFile)) {
-                while (sc.hasNextLine()) {
-                    String line = sc.nextLine();
+            // 4. Atualizar o ficheiro global de contadores (contadores.txt)
+            List<String> counterLines = new ArrayList<>();
+            try (Scanner scGlobal = new Scanner(globalCountersFile)) {
+                while (scGlobal.hasNextLine()) {
+                    String line = scGlobal.nextLine();
                     if (line.startsWith(houseName + ":")) {
-                        houseFound = true;
                         String[] parts = line.split(":");
                         StringBuilder newLine = new StringBuilder(parts[0]);
-                        
                         for (int i = 1; i < parts.length; i += 2) {
-                            if (parts[i].equals(sectionLetter)) {
-                                newLine.append(":").append(parts[i]).append(":").append(currentCount + 1);
+                            newLine.append(":").append(parts[i]).append(":");
+                            if (parts[i].equals(sectionUpper)) {
+                                newLine.append(currentCount + 1);
                             } else {
-                                newLine.append(":").append(parts[i]).append(":").append(parts[i+1]);
+                                newLine.append(parts[i+1]);
                             }
                         }
-                        lines.add(newLine.toString());
+                        counterLines.add(newLine.toString());
                     } else {
-                        lines.add(line);
+                        counterLines.add(line);
                     }
                 }
             }
             try (PrintWriter pwGlobal = new PrintWriter(new FileWriter(globalCountersFile))) {
-                for (String l : lines) {
-                    pwGlobal.println(l);
+                for (String l : counterLines) pwGlobal.println(l);
+            }
+
+            // 5. ATUALIZAÇÃO: Registar o novo dispositivo no ficheiro casas.txt
+            List<String> houseLines = new ArrayList<>();
+            try (Scanner scHouse = new Scanner(new File(HOUSES_FILE))) {
+                while (scHouse.hasNextLine()) {
+                    String line = scHouse.nextLine();
+                    if (line.startsWith(houseName + ";")) {
+                        if (line.contains("dispositivos:")) {
+                            String[] mainParts = line.split("dispositivos:");
+                            String prefix = mainParts[0] + "dispositivos:";
+                            String devicesPart = mainParts.length > 1 ? mainParts[1] : "";
+                            
+                            // Adiciona à lista existente (ex: L1 ou L1,P1)
+                            if (devicesPart.equals(";") || devicesPart.isEmpty()) {
+                                line = prefix + newDeviceId + ";";
+                            } else {
+                                String currentDevices = devicesPart.replace(";", "");
+                                line = prefix + currentDevices + "," + newDeviceId + ";";
+                            }
+                        } else {
+                            // Caso a tag dispositivos: ainda não exista na linha
+                            if (!line.endsWith(";")) line += ";";
+                            line += "dispositivos:" + newDeviceId + ";";
+                        }
+                    }
+                    houseLines.add(line);
                 }
+            }
+            try (PrintWriter pwHouse = new PrintWriter(new FileWriter(HOUSES_FILE))) {
+                for (String l : houseLines) pwHouse.println(l);
             }
 
             return Protocol.OK; 
@@ -165,7 +196,7 @@ public class DataManager {
         try (Scanner sc = new Scanner(counterFile)) {
             int nextId = sc.nextInt();
             int deviceNum = Integer.parseInt(device.substring(1));
-            return deviceNum > 0 && deviceNum <= nextId;
+            return deviceNum > 0 && deviceNum < nextId;
         } catch (Exception e) { 
             return false; 
         }
