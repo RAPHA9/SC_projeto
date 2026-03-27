@@ -86,7 +86,7 @@ public class DataManager {
 
     
     public static synchronized String registerDevice(String houseName, String sectionLetter) {
-        // 1. Validar a secção e obter a pasta correspondente
+        
         String sectionUpper = sectionLetter.toUpperCase();
         String folderName = SECTION_MAP.get(sectionUpper);
         if (folderName == null) return Protocol.NOK; 
@@ -97,19 +97,19 @@ public class DataManager {
         if (!counterFile.exists()) return Protocol.NOHM;
 
         try {
-            // 2. Ler o contador local e gerar o novo ID (ex: L1)
+           
             int currentCount;
             try (Scanner sc = new Scanner(counterFile)) {
                 currentCount = sc.hasNextInt() ? sc.nextInt() : 1;
             }
             String newDeviceId = sectionUpper + currentCount;
 
-            // 3. Incrementar e guardar o contador local
+           
             try (PrintWriter pw = new PrintWriter(counterFile)) {
                 pw.print(currentCount + 1);
             }
 
-            // 4. Atualizar o ficheiro global de contadores (contadores.txt)
+            
             List<String> counterLines = new ArrayList<>();
             try (Scanner scGlobal = new Scanner(globalCountersFile)) {
                 while (scGlobal.hasNextLine()) {
@@ -134,8 +134,6 @@ public class DataManager {
             try (PrintWriter pwGlobal = new PrintWriter(new FileWriter(globalCountersFile))) {
                 for (String l : counterLines) pwGlobal.println(l);
             }
-
-            // 5. ATUALIZAÇÃO: Registar o novo dispositivo no ficheiro casas.txt
             List<String> houseLines = new ArrayList<>();
             try (Scanner scHouse = new Scanner(new File(HOUSES_FILE))) {
                 while (scHouse.hasNextLine()) {
@@ -146,7 +144,7 @@ public class DataManager {
                             String prefix = mainParts[0] + "dispositivos:";
                             String devicesPart = mainParts.length > 1 ? mainParts[1] : "";
                             
-                            // Adiciona à lista existente (ex: L1 ou L1,P1)
+                           
                             if (devicesPart.equals(";") || devicesPart.isEmpty()) {
                                 line = prefix + newDeviceId + ";";
                             } else {
@@ -154,7 +152,7 @@ public class DataManager {
                                 line = prefix + currentDevices + "," + newDeviceId + ";";
                             }
                         } else {
-                            // Caso a tag dispositivos: ainda não exista na linha
+                            
                             if (!line.endsWith(";")) line += ";";
                             line += "dispositivos:" + newDeviceId + ";";
                         }
