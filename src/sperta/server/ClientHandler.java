@@ -148,8 +148,7 @@ public class ClientHandler implements Runnable {
                         }
                         break;
 
-                    case Protocol.RT: 
-                        String houseRT = tokens[1];
+                    case Protocol.RT:
                         if(tokens.length < 2){
                             out.writeObject(Protocol.NOK);
                         }else{

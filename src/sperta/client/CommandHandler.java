@@ -11,18 +11,42 @@ public class CommandHandler {
         String cmd = tokens[0].toUpperCase();
 
         switch (cmd) {
-            case Protocol.CREATE: 
-                return tokens.length == 2;
+            case Protocol.CREATE:
+                if(tokens.length != 2){
+                    System.out.println("Sintaxe correta: CREATE <hm>");
+                    return false;
+                }
+                return true;
             case Protocol.ADD:
-                return tokens.length == 4;
+                if(tokens.length != 4){
+                    System.out.println("Sintaxe correta: ADD <user> <hm> <s>");
+                    return false;
+                }
+                return true;
             case Protocol.RD: 
-                return tokens.length == 3;
+                if(tokens.length != 3){
+                    System.out.println("Sintaxe correta: RD <hm> <s>");
+                    return false;
+                }
+                return true;
             case Protocol.EC:
-                return tokens.length == 4;
+                if(tokens.length != 4){
+                    System.out.println("Sintaxe correta: EC <hm> <d> <int>");
+                    return false;
+                }
+                return true;
             case Protocol.RT:
-                return tokens.length == 2;
+                if(tokens.length != 2){
+                    System.out.println("Sintaxe correta: RT <hm>");
+                    return false;
+                }
+                return true;
             case Protocol.RH:
-                return tokens.length == 3;
+                if(tokens.length != 3){
+                    System.out.println("Sintaxe correta: RH <hm> <d>");
+                    return false;
+                }
+                return true;
             default:
                 System.out.println("Comando desconhecido");
                 return false;

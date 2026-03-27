@@ -129,6 +129,11 @@ public class DataManager {
                     }
                 }
             }
+            try (PrintWriter pwGlobal = new PrintWriter(new FileWriter(globalCountersFile))) {
+                for (String l : lines) {
+                    pwGlobal.println(l);
+                }
+            }
 
             return Protocol.OK; 
         } catch (IOException e) {
