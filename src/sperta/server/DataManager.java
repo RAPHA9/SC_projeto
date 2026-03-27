@@ -238,23 +238,25 @@ public class DataManager {
     public static synchronized boolean hasPermission(String house, String user, String section) {
         if (isOwner(house, user)) return true;
 
-        File f = new File(HOUSES_FILE);
-        try (Scanner sc = new Scanner(f)) {
+        try (Scanner sc = new Scanner(new File(HOUSES_FILE))) {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 if (line.startsWith(house + ";")) {
                     String[] parts = line.split(";");
-                    for (int i = 2; i < parts.length; i++) {
-                        String p = parts[i]; 
-                        if (p.contains(":")) {
-                            String[] pair = p.split(":");
-                            if (pair.length < 2) continue;
-                            String u = pair[0].trim();
-                            String s = pair[1].trim();
+                    for (String part : parts) {
+                        if (part.startsWith("perms:")) {
+                            String content = part.substring(6);
+                            if (content.isEmpty()) return false;
 
-                            if (u.equals(user)) {
+                            String[] permList = content.split(",");
+                            for (String p : permList) {
+                                String[] pair = p.split(":");
+                                if (pair.length < 2) continue;
                                 
-                                if (section == null || s.equals(section)) {
+                                String u = pair[0].trim();
+                                String s = pair[1].trim();
+
+                                if (u.equals(user) && (section == null || s.equals(section))) {
                                     return true;
                                 }
                             }
@@ -299,10 +301,10 @@ public class DataManager {
     }
 
     public static synchronized String addPermission(String owner, String targetUser, String house, String section) {
-        if(!houseExists(house)){
+        if (!houseExists(house)) {
             return Protocol.NOHM;
         }
-        if(!userExists(targetUser)){
+        if (!userExists(targetUser)) {
             return Protocol.NOUSER;
         }
         if (!isOwner(house, owner)) {
@@ -322,20 +324,36 @@ public class DataManager {
                     String line = sc.nextLine();
                     if (line.startsWith(house + ";")) {
                         houseFound = true;
-                        
                         String[] parts = line.split(";");
-                        boolean permExists = false;
+                        StringBuilder newLine = new StringBuilder();
+                        
                         for (String part : parts) {
-                            if (part.equals(targetPerm)) {
-                                permExists = true;
-                                break;
-                            }
-                        }
+                            if (part.startsWith("perms:")) {
+                                String currentContent = part.substring(6);
+                                boolean alreadyExists = false;
+                                
+                                if (!currentContent.isEmpty()) {
+                                    String[] existing = currentContent.split(",");
+                                    for (String p : existing) {
+                                        if (p.equals(targetPerm)) {
+                                            alreadyExists = true;
+                                            break;
+                                        }
+                                    }
+                                }
 
-                        if (!permExists) {
-                            if (!line.endsWith(";")) line += ";";
-                            line += targetPerm + ";";
+                                if (!alreadyExists) {
+                                    String newContent = currentContent.isEmpty() ? targetPerm : currentContent + "," + targetPerm;
+                                    newLine.append("perms:").append(newContent);
+                                } else {
+                                    newLine.append(part);
+                                }
+                            } else {
+                                newLine.append(part);
+                            }
+                            newLine.append(";");
                         }
+                        line = newLine.toString();
                     }
                     lines.add(line);
                 }
