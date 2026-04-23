@@ -9,7 +9,8 @@ public class Protocol {
    
     public static final String WRONG_PWD = "WRONG-PWD";
     public static final String OK_NEW_USER = "OK-NEW-USER";
-    public static final String OK_USER = "OK-USER"; 
+    public static final String OK_USER = "OK-USER";
+    public static final String OK_ATTEST = "OK-ATTEST";
 
 
     public static final String CREATE = "CREATE"; 
@@ -22,6 +23,8 @@ public class Protocol {
     
     public static final String OK = "OK"; 
     public static final String NOK = "NOK"; 
+    public static final String NOKINTEGRITY = "NOK-INTEGRITY";
+    public static final String NOKATTEST = "NOK-ATTEST";
     public static final String NOPERM = "NOPERM"; 
     public static final String NOHM = "NOHM"; 
     public static final String NOUSER = "NOUSER";

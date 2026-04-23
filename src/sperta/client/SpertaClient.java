@@ -1,104 +1,358 @@
 package sperta.client;
 import java.io.*;
 import java.net.*;
+import java.nio.file.Files;
+import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
 import java.util.Scanner;
+import java.util.Map;
+import java.util.HashMap;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
 
 public class SpertaClient {
 
     public static void main(String[] args) {
-        if (args.length < 3) {
-            System.out.println("Usage: SpertaClient <serverAddress> <user-id> <password>");
+        if (args.length < 7) {
+            System.out.println("Usage: SpertaClient <serverAddress> <truststore> <password-truststore> " +
+                               "<keystore> <password-keystore> <user-id> <password>");
             return;
         }
 
         String address = args[0];
-        String user = args[1];
-        String password = args[2];
-        String host = address;
-        int port = 22345;
+        String trustStorePath = args[1];
+        String trustStorePass = args[2];
+        String keyStorePath = args[3];
+        String keyStorePass = args[4];
+        String userId = args[5];
+        String password = args[6];
 
-        if (address.contains(":")) {
-            String[] parts = address.split(":");
-            host = parts[0];
-            port = Integer.parseInt(parts[1]);
-        }
+        String host = address.contains(":") ? address.split(":")[0] : address;
+        int port = address.contains(":") ? Integer.parseInt(address.split(":")[1]) : 22345;
 
-        try (Socket socket = new Socket(host, port);
-             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-             ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
-             Scanner scanner = new Scanner(System.in)) {
+        try {
+            SSLContext sslContext = createSSLContext(keyStorePath, keyStorePass, trustStorePath, trustStorePass);
+            SSLSocketFactory factory = sslContext.getSocketFactory();
 
-            // 1. ATESTAÇÃO DINÂMICA
-            File currentFile = new File(SpertaClient.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-            long clientSize = currentFile.length(); 
-            out.writeObject(clientSize);
-            out.flush();
+            try (SSLSocket socket = (SSLSocket) factory.createSocket(host, port);
+                 ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+                 ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+                 Scanner scanner = new Scanner(System.in)) {
 
-            String attestationMsg = (String) in.readObject();
-            System.out.println(attestationMsg); 
-            
-            if (attestationMsg.contains("FAILED")) return; 
+               
+                long nonce = in.readLong(); 
+                File jarFile = new File(SpertaClient.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+                byte[] jarBytes = Files.readAllBytes(jarFile.toPath());
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                md.update(longToBytes(nonce)); 
+                byte[] hashAtestacao = md.digest(jarBytes); 
 
-            // 2. AUTENTICAÇÃO
-            out.writeObject(user);
-            out.writeObject(password);
-            out.flush();
+                out.writeObject(hashAtestacao);
+                out.flush();
 
-            String authStatus = (String) in.readObject();
-            System.out.println("Server Response: " + authStatus); 
+                String attestationStatus = (String) in.readObject();
+                System.out.println("Attestation: " + attestationStatus);
+                if (attestationStatus.equals("NOK-ATTEST")) return; 
 
-            if (authStatus.equals("WRONG-PWD")) return;
+                
+                out.writeObject(userId);
+                out.writeObject(password);
+                out.flush();
 
-            // 3. CICLO DE COMANDOS
-            System.out.println("Introduza o comando (ou CTRL+C para sair):");
-            CommandHandler.showHelp();
-            while (true) { 
-                System.out.print("> ");
-                String command = scanner.nextLine();
-
-                if (command.equalsIgnoreCase("EXIT")) break;
-                if (command.equalsIgnoreCase("HELP")) {
-                    CommandHandler.showHelp();
-                    continue;
-                }
-
-                if (CommandHandler.validateCommand(command)) {
-                    out.writeObject(command);
+                String authStatus = (String) in.readObject();
+                if (authStatus.equals("SEND-CERT")) {
+                    byte[] certBytes = extractCertificate(keyStorePath, keyStorePass, userId);
+                    out.writeObject(certBytes);
                     out.flush();
-                    
-                    Object response = in.readObject();
-                    String respStr = response.toString();
-
-                   
-                    if (respStr.equals("OK") && (command.toUpperCase().startsWith("RT") || command.toUpperCase().startsWith("RH"))) {
-                        String localFileName = command.toUpperCase().startsWith("RH") ? "historico.csv" : "estado_casa.txt";
-                        receiveFile(in, localFileName, respStr);
-                    } else {
-                        System.out.println(respStr); 
-                    }
+                    authStatus = (String) in.readObject();
                 }
-            }
+                System.out.println("Server Auth Response: " + authStatus); 
+                if (authStatus.equals("WRONG-PWD")) return; 
 
+               
+                System.out.println("Introduza o comando:");
+                CommandHandler.showHelp(); 
+                
+                while (true) {
+                    System.out.print("> ");
+                    String command = scanner.nextLine().trim();
+                    if (command.equalsIgnoreCase("EXIT")) break;
+                    if (command.isEmpty()) continue;
+
+                    if(command.equals("HELP")){
+                        CommandHandler.showHelp();
+                        continue;
+                    }
+
+                    if (CommandHandler.validateCommand(command)) {
+                        String[] tokens = command.split("\\s+");
+                        String cmdType = tokens[0].toUpperCase();
+
+                        if (cmdType.equals("CREATE")) {
+                            
+                            out.writeObject("CREATE " + tokens[1].toLowerCase()); 
+                            List<byte[]> keys = generateAndWrapSectionKeys(keyStorePath, keyStorePass, userId);
+                            out.writeObject(keys);   
+                        } 
+                        else if (cmdType.equals("ADD")) {
+                           
+                            PublicKey targetPubKey = getTargetPublicKey(tokens[1], out, in, trustStorePath, trustStorePass);
+                            out.writeObject("GET_KEY " + tokens[2].toLowerCase() + " " + tokens[3].toUpperCase());
+                            out.flush();
+                            
+                            Object respKey = in.readObject();
+                            if (respKey instanceof byte[]) {
+                                SecretKey secKey = decryptSectionKey((byte[]) respKey, keyStorePath, keyStorePass, userId);
+                                byte[] wrappedForTarget = wrapKeyForUser(secKey, targetPubKey);
+                                
+                                
+                                out.writeObject("ADD " + tokens[1] + " " + tokens[2].toLowerCase() + " " + tokens[3].toUpperCase()); 
+                                out.writeObject(wrappedForTarget); 
+                            } else {
+                                System.out.println("Erro ao obter chave para partilha: " + respKey);
+                                continue;
+                            }
+                        }
+                        else if (cmdType.equals("RD")) {
+                            
+                            String house = tokens[1].toLowerCase();
+                            String section = tokens[2].toUpperCase();
+                            out.writeObject("RD " + house + " " + section);
+                        }
+                        else if (cmdType.equals("EC")) {
+                            if (tokens.length < 4) {
+                                System.out.println("Erro: Formato EC <casa> <dispositivo> <valor>");
+                            } else {
+                                String house = tokens[1].toLowerCase();
+                                String device = tokens[2].toUpperCase();
+                                String valToEncrypt = tokens[3];
+
+                                
+                                out.writeObject("EC " + house + " " + device); 
+                                out.flush();
+
+                                
+                                Object resp = in.readObject();
+
+                                if (resp instanceof byte[]) {
+                                    
+                                    SecretKey secKey = decryptSectionKey((byte[]) resp, keyStorePath, keyStorePass, userId);
+                                    
+                                    String encVal = encryptValue(valToEncrypt, secKey);
+                                    out.writeObject(encVal);
+                                    out.flush();
+                                    
+                                    
+                                    System.out.println(in.readObject());
+                                } else {
+                                    System.out.println("Erro: " + resp); 
+                                }
+                            }
+                            continue; 
+                        }
+                        else if (cmdType.equals("RT") || cmdType.equals("RH")) {
+                            
+                            String house = tokens[1].toLowerCase();
+                            String rest = (tokens.length > 2) ? " " + tokens[2].toUpperCase() : "";
+                            out.writeObject(cmdType + " " + house + rest);
+                        }
+                        else {
+                            out.writeObject(command);
+                        }
+                        
+                        out.flush();
+                        Object response = in.readObject();
+                        handleResponse(response, in, cmdType, tokens, keyStorePath, keyStorePass, userId);
+                    }
+                } 
+            } 
         } catch (Exception e) {
-            System.err.println("Erro de ligação: " + e.getMessage());
+            System.err.println("Erro de segurança ou ligação: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
-    private static void receiveFile(ObjectInputStream in, String fileName, String status) throws Exception {
-        long fileSize = (long) in.readObject();
+    private static void handleResponse(Object response, ObjectInputStream in, String cmdType, String[] tokens, 
+                               String ksPath, String ksPass, String userId) throws Exception {
+    
         
-       
-        try (FileOutputStream fos = new FileOutputStream(fileName)) {
-            byte[] buffer = new byte[4096];
-            long totalRead = 0;
-            int read;
+        if (response.equals("OK") && (cmdType.equals("RT") || cmdType.equals("RH"))) {
             
-            while (totalRead < fileSize && (read = in.read(buffer, 0, (int) Math.min(buffer.length, fileSize - totalRead))) != -1) {
-                fos.write(buffer, 0, read);
-                totalRead += read;
+            Object keyData = in.readObject();
+            java.util.Map<String, SecretKey> decryptedKeys = new java.util.HashMap<>();
+
+            
+            if (keyData instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, byte[]> wrappedMap = (java.util.Map<String, byte[]>) keyData;
+                for (java.util.Map.Entry<String, byte[]> entry : wrappedMap.entrySet()) {
+                    decryptedKeys.put(entry.getKey(), decryptSectionKey(entry.getValue(), ksPath, ksPass, userId));
+                }
+            } else if (keyData instanceof byte[]) {
+                
+                String section = tokens[2].substring(0, 1).toUpperCase();
+                decryptedKeys.put(section, decryptSectionKey((byte[]) keyData, ksPath, ksPass, userId));
             }
-            System.out.println(status + ", " + fileSize + " (long), seguido de " + totalRead + " bytes de dados.");
+
+            byte[] encryptedFileData = (byte[]) in.readObject();
+            boolean isHistory = cmdType.equals("RH");
+            String fileName = isHistory ? "log.csv" : "estado_decrypted.txt";
+
+            
+            try (PrintWriter writer = new PrintWriter(new FileWriter(fileName), true)) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(encryptedFileData)));
+                String line;
+                
+                while ((line = reader.readLine()) != null) {
+                    if (line.trim().isEmpty()) continue;
+                    
+                    String currentSec = isHistory ? tokens[2].substring(0, 1).toUpperCase() : line.substring(0, 1).toUpperCase();
+                    
+                    if (decryptedKeys.containsKey(currentSec)) {
+                        String decrypted = decryptLine(line, decryptedKeys.get(currentSec), isHistory);
+                        writer.println(decrypted);
+                    } else {
+                        System.out.println(line + " (Sem permissão para secção " + currentSec + ")");
+                    }
+                }
+            }
+            System.out.println("\nFicheiro guardado em: " + fileName);
+        } else {
+            System.out.println(response);
         }
+    }
+
+    private static String decryptLine(String line, SecretKey key, boolean isHistory) throws Exception {
+        try {
+            if (isHistory) {
+                
+                String[] parts = line.split(", ");
+                if (parts.length < 2) return line;
+                return parts[0] + ", " + decryptValue(parts[1], key);
+            } else {
+                String[] parts = line.split(":");
+                if (parts.length < 2) return line;
+                return parts[0] + ":" + decryptValue(parts[1], key);
+            }
+        } catch (Exception e) {
+            return line + " (Erro na decifração)";
+        }
+    }
+
+
+
+    private static SSLContext createSSLContext(String ksPath, String ksPass, String tsPath, String tsPass) throws Exception {
+        KeyStore ks = KeyStore.getInstance("JKS");
+        ks.load(new FileInputStream(ksPath), ksPass.toCharArray());
+        KeyStore ts = KeyStore.getInstance("JKS");
+        ts.load(new FileInputStream(tsPath), tsPass.toCharArray());
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, ksPass.toCharArray());
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(ts);
+        SSLContext ctx = SSLContext.getInstance("TLS");
+        ctx.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+        return ctx;
+    }
+
+    private static List<byte[]> generateAndWrapSectionKeys(String ksPath, String ksPass, String userId) throws Exception {
+        List<byte[]> wrappedKeys = new ArrayList<>();
+        KeyStore ks = KeyStore.getInstance("JKS");
+        ks.load(new FileInputStream(ksPath), ksPass.toCharArray());
+        PublicKey pubKey = ks.getCertificate(userId).getPublicKey();
+        KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+        keyGen.init(128);
+        Cipher rsaCipher = Cipher.getInstance("RSA");
+        rsaCipher.init(Cipher.WRAP_MODE, pubKey);
+        for (int i = 0; i < 6; i++) {
+            SecretKey secKey = keyGen.generateKey();
+            wrappedKeys.add(rsaCipher.wrap(secKey));
+        }
+        return wrappedKeys;
+    }
+
+    private static SecretKey decryptSectionKey(byte[] wrappedKey, String ksPath, String ksPass, String alias) throws Exception {
+        KeyStore ks = KeyStore.getInstance("JKS");
+        ks.load(new FileInputStream(ksPath), ksPass.toCharArray());
+        PrivateKey privKey = (PrivateKey) ks.getKey(alias, ksPass.toCharArray());
+        Cipher cipher = Cipher.getInstance("RSA");
+        cipher.init(Cipher.UNWRAP_MODE, privKey);
+        return (SecretKey) cipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
+    }
+
+    private static String encryptValue(String value, SecretKey key) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES");
+        cipher.init(Cipher.ENCRYPT_MODE, key);
+        byte[] encrypted = cipher.doFinal(value.getBytes());
+        return Base64.getEncoder().encodeToString(encrypted);
+    }
+
+    private static String decryptValue(String encryptedBase64, SecretKey key) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES");
+        cipher.init(Cipher.DECRYPT_MODE, key);
+        byte[] decrypted = cipher.doFinal(Base64.getDecoder().decode(encryptedBase64));
+        return new String(decrypted);
+    }
+
+    private static byte[] extractCertificate(String ksPath, String ksPass, String alias) throws Exception {
+        KeyStore ks = KeyStore.getInstance("JKS");
+        ks.load(new FileInputStream(ksPath), ksPass.toCharArray());
+        return ks.getCertificate(alias).getEncoded();
+    }
+
+    private static byte[] longToBytes(long x) {
+        return java.nio.ByteBuffer.allocate(Long.BYTES).putLong(x).array();
+    }
+
+    private static PublicKey getTargetPublicKey(String targetUser, ObjectOutputStream out, ObjectInputStream in, 
+                                                String tsPath, String tsPass) throws Exception {
+        KeyStore ts = KeyStore.getInstance("JKS");
+        File tsFile = new File(tsPath);
+        if (tsFile.exists()) {
+            try (FileInputStream fis = new FileInputStream(tsFile)) {
+                ts.load(fis, tsPass.toCharArray());
+            }
+        } else {
+            ts.load(null, tsPass.toCharArray());
+        }
+        if (ts.containsAlias(targetUser)) {
+            return ts.getCertificate(targetUser).getPublicKey();
+        }
+        out.writeObject("GET_CERT " + targetUser);
+        out.flush();
+        Object response = in.readObject();
+        if (response instanceof byte[]) {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            Certificate cert = cf.generateCertificate(new ByteArrayInputStream((byte[]) response));
+            ts.setCertificateEntry(targetUser, cert);
+            try (FileOutputStream fos = new FileOutputStream(tsPath)) {
+                ts.store(fos, tsPass.toCharArray());
+            }
+            return cert.getPublicKey();
+        } else {
+            throw new Exception("Utilizador não encontrado: " + response);
+        }
+    }
+
+    private static byte[] wrapKeyForUser(SecretKey secKey, PublicKey pubKey) throws Exception {
+        Cipher rsaCipher = Cipher.getInstance("RSA");
+        rsaCipher.init(Cipher.WRAP_MODE, pubKey);
+        return rsaCipher.wrap(secKey);
     }
 }
