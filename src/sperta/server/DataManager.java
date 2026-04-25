@@ -450,7 +450,10 @@ public class DataManager {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 if (line.startsWith(house + ";")) {
-                    if (line.contains("perms:" + user + ":" + section) || line.contains("perms:" + user + ":all")) return true;
+                    return line.contains("perms:" + user + ":" + section)
+                        ||line.contains("perms:" + user + ":all")
+                        || line.contains("," + user + ":" + section)
+                        || line.contains("," + user + ":all");
                 }
             }
         } catch (Exception e) { return false; }
