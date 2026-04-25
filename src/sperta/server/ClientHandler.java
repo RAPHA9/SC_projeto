@@ -25,8 +25,8 @@ public class ClientHandler implements Runnable {
             out = new ObjectOutputStream(socket.getOutputStream());
             in = new ObjectInputStream(socket.getInputStream());
 
-            if (!handleAttestation()) return; 
-            if (!handleAuthentication()) return; 
+            if (!handleAttestation()) return;
+            if (!handleAuthentication()) return;
 
             processCommands();
         } catch (Exception e) {
@@ -54,7 +54,7 @@ public class ClientHandler implements Runnable {
     }
 
     private boolean handleAuthentication() throws IOException, ClassNotFoundException {
-        String user = (String) in.readObject(); 
+        String user = (String) in.readObject();
         String password = (String) in.readObject();
         try {
             String response = DataManager.authenticateOrRegister(user, password);
@@ -63,7 +63,7 @@ public class ClientHandler implements Runnable {
                 out.flush();
                 byte[] certBytes = (byte[]) in.readObject();
                 DataManager.saveUserCertificate(user, certBytes);
-                out.writeObject(Protocol.OK); 
+                out.writeObject(Protocol.OK);
             } else {
                 out.writeObject(response);
             }
@@ -82,25 +82,24 @@ public class ClientHandler implements Runnable {
             while (true) {
                 Object input = in.readObject();
                 if (input == null) break;
-                
+
                 String clientInput = (String) input;
                 String[] tokens = clientInput.trim().split("\\s+");
                 String command = tokens[0].toUpperCase();
 
                 switch (command) {
-                    case "GET_CERT": 
+                    case "GET_CERT":
                         byte[] cert = DataManager.getUserCertificate(tokens[1]);
                         out.writeObject(cert != null ? cert : Protocol.NOUSER);
                         break;
 
-                    
-                    case "GET_KEY": 
+                    case "GET_KEY":
                         if (tokens.length < 3) {
                             out.writeObject(Protocol.NOK);
                         } else {
                             String houseGK = tokens[1];
                             String sec = tokens[2].toUpperCase();
-                            
+
                             if (!DataManager.houseExists(houseGK)) {
                                 out.writeObject(Protocol.NOHM);
                             } else if (!"EGLMPS".contains(sec)) {
@@ -115,7 +114,7 @@ public class ClientHandler implements Runnable {
                         break;
 
                     case Protocol.CREATE:
-                        List<byte[]> keys = (List<byte[]>) in.readObject(); 
+                        List<byte[]> keys = (List<byte[]>) in.readObject();
                         out.writeObject(DataManager.createHouse(tokens[1], currentUser, keys));
                         break;
 
@@ -132,9 +131,10 @@ public class ClientHandler implements Runnable {
                             String deviceEC = tokens[2].toUpperCase();
                             String sectionEC = deviceEC.substring(0, 1).toUpperCase();
 
-                           
                             if (!DataManager.houseExists(houseEC)) {
                                 out.writeObject(Protocol.NOHM);
+                            } else if (!DataManager.deviceExists(houseEC, deviceEC)) {
+                                out.writeObject(Protocol.NOD);
                             } else if (!DataManager.hasPermission(houseEC, currentUser, sectionEC)) {
                                 out.writeObject(Protocol.NOPERM);
                             } else {
@@ -142,7 +142,6 @@ public class ClientHandler implements Runnable {
                                 out.writeObject(wrappedKey);
                                 out.flush();
 
-                                
                                 String encryptedValue = (String) in.readObject();
                                 String resEC = DataManager.updateDeviceState(houseEC, deviceEC, encryptedValue, currentUser);
                                 out.writeObject(resEC);
@@ -154,7 +153,6 @@ public class ClientHandler implements Runnable {
                         if (tokens.length < 3) {
                             out.writeObject(Protocol.NOK);
                         } else {
-                            
                             String resRD = DataManager.registerDevice(tokens[1], tokens[2], currentUser);
                             out.writeObject(resRD);
                         }
@@ -177,45 +175,87 @@ public class ClientHandler implements Runnable {
 
     private void handleFileCommand(String[] tokens, String type) throws IOException, ClassNotFoundException {
         String house = tokens[1].toLowerCase();
-        String device = (type.equals(Protocol.RH) && tokens.length > 2) ? tokens[2] : null;
 
-        File fileToSend = DataManager.getFileForCommand(currentUser, house, device, type);
-        
-        if (fileToSend == null || !fileToSend.exists()) {
-            out.writeObject(Protocol.NODATA);
+        if (!DataManager.houseExists(house)) {
+            out.writeObject(Protocol.NOHM);
             out.flush();
-        } else {
-            try {
-                
-                out.writeObject(Protocol.OK);
-                
-            
-                if (type.equals(Protocol.RT)) {
-                    java.util.Map<String, byte[]> keysMap = new java.util.HashMap<>();
-                    for (char s : "EGLMPS".toCharArray()) {
-                        String sec = String.valueOf(s);
-                        if (DataManager.hasPermission(house, currentUser, sec)) {
-                            byte[] k = DataManager.getEncryptedSectionKey(house, sec, currentUser);
-                            if (k != null) keysMap.put(sec, k);
-                        }
-                    }
-                    out.writeObject(keysMap);
-                } else {
-                    String section = device.substring(0, 1).toUpperCase();
-                    byte[] key = DataManager.getEncryptedSectionKey(house, section, currentUser);
-                    out.writeObject(key != null ? key : new byte[0]);
-                }
+            return;
+        }
 
-            
-                byte[] fileBytes = Files.readAllBytes(fileToSend.toPath());
-                out.writeObject(fileBytes); 
+        if (type.equals(Protocol.RH)) {
+            if (tokens.length < 3) {
+                out.writeObject(Protocol.NOK);
                 out.flush();
-                
-            } catch (Exception e) {
-            
-                out.writeObject("Erro ao processar ficheiro: " + e.getMessage());
-                out.flush();
+                return;
             }
+            String device = tokens[2].toUpperCase();
+            String sectionRH = device.substring(0, 1).toUpperCase();
+
+            if (!DataManager.hasPermission(house, currentUser, sectionRH)) {
+                out.writeObject(Protocol.NOPERM);
+                out.flush();
+                return;
+            }
+            if (!DataManager.deviceExists(house, device)) {
+                out.writeObject(Protocol.NOD);
+                out.flush();
+                return;
+            }
+
+            File fileToSend = DataManager.getFileForCommand(currentUser, house, device, type);
+            if (fileToSend == null || !fileToSend.exists()) {
+                out.writeObject(Protocol.NODATA);
+                out.flush();
+                return;
+            }
+
+            sendFileWithKey(fileToSend, house, device, type);
+
+        } else {
+            if (!DataManager.hasAnyPermissionInHouse(currentUser, house)) {
+                out.writeObject(Protocol.NOPERM);
+                out.flush();
+                return;
+            }
+
+            File fileToSend = DataManager.getFileForCommand(currentUser, house, null, type);
+            if (fileToSend == null || !fileToSend.exists()) {
+                out.writeObject(Protocol.NODATA);
+                out.flush();
+                return;
+            }
+
+            sendFileWithKey(fileToSend, house, null, type);
+        }
+    }
+
+    private void sendFileWithKey(File fileToSend, String house, String device, String type) throws IOException {
+        try {
+            out.writeObject(Protocol.OK);
+
+            if (type.equals(Protocol.RT)) {
+                java.util.Map<String, byte[]> keysMap = new java.util.HashMap<>();
+                for (char s : "EGLMPS".toCharArray()) {
+                    String sec = String.valueOf(s);
+                    if (DataManager.hasPermission(house, currentUser, sec)) {
+                        byte[] k = DataManager.getEncryptedSectionKey(house, sec, currentUser);
+                        if (k != null) keysMap.put(sec, k);
+                    }
+                }
+                out.writeObject(keysMap);
+            } else {
+                String section = device.substring(0, 1).toUpperCase();
+                byte[] key = DataManager.getEncryptedSectionKey(house, section, currentUser);
+                out.writeObject(key != null ? key : new byte[0]);
+            }
+
+            byte[] fileBytes = Files.readAllBytes(fileToSend.toPath());
+            out.writeObject(fileBytes);
+            out.flush();
+
+        } catch (Exception e) {
+            out.writeObject("Erro ao processar ficheiro: " + e.getMessage());
+            out.flush();
         }
     }
 

@@ -12,6 +12,7 @@ import java.util.*;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -26,15 +27,13 @@ public class DataManager {
     private static final String HOUSES_ROOT = DATA_PATH + "houses/";
     private static final String PBE_SALT_FILE = DATA_PATH + "pbe_salt.bin";
 
-    private static String serverPbePassword; 
+    private static String serverPbePassword;
 
     private static final Map<String, String> SECTION_MAP = Map.of(
         "E", "Electros", "G", "Garden", "L", "Luzes",
         "M", "Multimedia", "P", "Portas", "S", "Stores"
     );
 
-    
-    
     public static boolean initialize(String password) {
         serverPbePassword = password;
         try {
@@ -50,23 +49,21 @@ public class DataManager {
                         encryptAndSaveFile(path, "".getBytes());
                     } else {
                         f.createNewFile();
+                        updateFileHash(path);
                     }
-                    updateFileHash(path);
                 }
             }
-            return verifyFileIntegrity(USERS_FILE) && verifyFileIntegrity(HOUSES_FILE) && 
+            return verifyFileIntegrity(USERS_FILE) && verifyFileIntegrity(HOUSES_FILE) &&
                    verifyFileIntegrity(COUNTERS_FILE) && verifyFileIntegrity(STATES_FILE);
         } catch (Exception e) { return false; }
     }
-
-   
 
     public static synchronized String authenticateOrRegister(String userId, String password) throws Exception {
         if (!verifyFileIntegrity(USERS_FILE)) {
             System.out.println("CRITICAL: Falha de integridade em users.txt");
             System.exit(0);
         }
-        
+
         File file = new File(USERS_FILE);
         List<String> lines = Files.readAllLines(file.toPath());
         for (String line : lines) {
@@ -85,8 +82,6 @@ public class DataManager {
         return Protocol.OK_NEW_USER;
     }
 
-    
-
     public static synchronized String createHouse(String houseName, String owner, List<byte[]> encryptedSectionKeys) {
         try {
             if (houseExists(houseName)) return Protocol.NOK;
@@ -99,19 +94,17 @@ public class DataManager {
                 File sectionDir = new File(houseDir, sections[i]);
                 sectionDir.mkdirs();
                 saveCounter(new File(sectionDir, "counter.txt"), 1);
-                
-               
+
                 String keyName = String.format("key.%s.%s.%s", houseName, sections[i], owner);
                 saveSectionKey(keyName, encryptedSectionKeys.get(i));
             }
-            
+
             updateHousesFileSecurely(houseName, owner);
             return Protocol.OK;
         } catch (Exception e) { return Protocol.NOK; }
     }
 
     public static String getPathToCounter(String house, String section) {
-       
         return HOUSES_ROOT + house + "/" + section.toUpperCase() + "/counter.txt";
     }
 
@@ -125,6 +118,7 @@ public class DataManager {
         try {
             if (!houseExists(house)) return Protocol.NOHM;
             if (!isOwner(house, owner)) return Protocol.NOPERM;
+            if (!userExists(targetUser)) return Protocol.NOUSER;
 
             byte[] content = getDecryptedFileContent(HOUSES_FILE);
             List<String> lines = new ArrayList<>(Arrays.asList(new String(content).split(System.lineSeparator())));
@@ -132,7 +126,7 @@ public class DataManager {
 
             for (int i = 0; i < lines.size(); i++) {
                 if (lines.get(i).startsWith(house + ";")) {
-                    lines.set(i, lines.get(i) + targetUser + ":" + section + ",");
+                    lines.set(i, updatePermissionString(lines.get(i), targetUser + ":" + section));
                     found = true;
                     break;
                 }
@@ -140,15 +134,12 @@ public class DataManager {
             if (!found) return Protocol.NOHM;
 
             encryptAndSaveFile(HOUSES_FILE, String.join(System.lineSeparator(), lines).getBytes());
-            updateFileHash(HOUSES_FILE);
 
-            
             saveSectionKey(String.format("key.%s.%s.%s", house, section, targetUser), encryptedKey);
             return Protocol.OK;
         } catch (Exception e) { return Protocol.NOK; }
     }
 
-    
 
     private static SecretKey deriveKey(byte[] salt) throws Exception {
         PBEKeySpec spec = new PBEKeySpec(serverPbePassword.toCharArray(), salt, 10000, 128);
@@ -158,15 +149,33 @@ public class DataManager {
     public static byte[] getDecryptedFileContent(String filePath) throws Exception {
         File file = new File(filePath);
         if (!file.exists() || file.length() == 0) return new byte[0];
-        Cipher c = Cipher.getInstance("AES");
-        c.init(Cipher.DECRYPT_MODE, deriveKey(readPbeSalt()));
-        return c.doFinal(Files.readAllBytes(file.toPath()));
+
+        byte[] fileBytes = Files.readAllBytes(file.toPath());
+        if (fileBytes.length < 16) return new byte[0];
+
+        byte[] iv = Arrays.copyOfRange(fileBytes, 0, 16);
+        byte[] ciphertext = Arrays.copyOfRange(fileBytes, 16, fileBytes.length);
+
+        Cipher c = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        c.init(Cipher.DECRYPT_MODE, deriveKey(readPbeSalt()), new IvParameterSpec(iv));
+        return c.doFinal(ciphertext);
     }
 
+  
     public static void encryptAndSaveFile(String filePath, byte[] data) throws Exception {
-        Cipher c = Cipher.getInstance("AES");
-        c.init(Cipher.ENCRYPT_MODE, deriveKey(readPbeSalt()));
-        Files.write(new File(filePath).toPath(), c.doFinal(data));
+        byte[] iv = new byte[16];
+        new SecureRandom().nextBytes(iv);
+
+        Cipher c = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        c.init(Cipher.ENCRYPT_MODE, deriveKey(readPbeSalt()), new IvParameterSpec(iv));
+        byte[] ciphertext = c.doFinal(data);
+
+      
+        byte[] toWrite = new byte[16 + ciphertext.length];
+        System.arraycopy(iv, 0, toWrite, 0, 16);
+        System.arraycopy(ciphertext, 0, toWrite, 16, ciphertext.length);
+
+        Files.write(new File(filePath).toPath(), toWrite);
         updateFileHash(filePath);
     }
 
@@ -181,19 +190,17 @@ public class DataManager {
         return Files.readAllBytes(f.toPath());
     }
 
+   
+
     public static boolean verifyFileIntegrity(String filePath, byte[] content) {
         try {
             File hashFile = new File(filePath + ".hash");
-            
-            
             if (!hashFile.exists()) {
-                return content.length == 0; 
+                return content.length == 0;
             }
-
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] computedHash = md.digest(content);
             byte[] storedHash = Base64.getDecoder().decode(Files.readAllBytes(hashFile.toPath()));
-
             return MessageDigest.isEqual(computedHash, storedHash);
         } catch (Exception e) {
             return false;
@@ -205,7 +212,7 @@ public class DataManager {
             File f = new File(path);
             if (!f.exists()) return true;
             byte[] data = path.equals(HOUSES_FILE) ? getDecryptedFileContent(path) : Files.readAllBytes(f.toPath());
-            
+
             File hFile = new File(path + ".hash");
             if (!hFile.exists()) return data.length == 0;
 
@@ -214,7 +221,7 @@ public class DataManager {
         } catch (Exception e) { return false; }
     }
 
-   
+  
 
     private static void saveCounter(File file, int value) throws Exception {
         Files.write(file.toPath(), String.valueOf(value).getBytes());
@@ -244,14 +251,14 @@ public class DataManager {
         byte[] data;
         if (path.equals(HOUSES_FILE)) data = getDecryptedFileContent(path);
         else data = Files.readAllBytes(new File(path).toPath());
-        
+
         MessageDigest md = MessageDigest.getInstance("SHA-256");
         byte[] hash = md.digest(data);
         Files.write(new File(path + ".hash").toPath(), Base64.getEncoder().encode(hash));
     }
 
-    public static boolean houseExists(String name) { 
-        return new File(HOUSES_ROOT + name).exists(); 
+    public static boolean houseExists(String name) {
+        return new File(HOUSES_ROOT + name).exists();
     }
 
     public static synchronized boolean isOwner(String house, String user) {
@@ -271,7 +278,6 @@ public class DataManager {
         return f.exists() ? Files.readAllBytes(f.toPath()) : null;
     }
 
-    
     public static synchronized String registerDevice(String houseName, String sectionLetter, String requestingUser) {
         if (!houseExists(houseName)) return Protocol.NOHM;
         if (!isOwner(houseName, requestingUser)) return Protocol.NOPERM;
@@ -280,31 +286,29 @@ public class DataManager {
         File counterFile = new File(HOUSES_ROOT + houseName + "/" + sectionUpper + "/counter.txt");
 
         try {
-            if (!verifyFileIntegrity(counterFile.getPath())) return "NOK-INTEGRITY";
+            if (!verifyFileIntegrity(counterFile.getPath())) return Protocol.NOKINTEGRITY;
 
             int currentCount;
             try (Scanner sc = new Scanner(counterFile)) {
                 currentCount = sc.hasNextInt() ? sc.nextInt() : 1;
             }
-            
+
             String newDeviceId = sectionUpper + currentCount;
             saveCounter(counterFile, currentCount + 1);
 
             updateGlobalCounters(houseName, sectionUpper, currentCount + 1);
             securelyAddDeviceToHouse(houseName, newDeviceId);
 
-            return "OK";
-        } catch (Exception e) { return "NOK"; }
+            return Protocol.OK;
+        } catch (Exception e) { return Protocol.NOK; }
     }
 
-
-   
     private static void updateGlobalCounters(String houseName, String section, int nextId) throws Exception {
         if (!verifyFileIntegrity(COUNTERS_FILE)) {
-            System.out.println("NOK-INTEGRITY");
+            System.out.println(Protocol.NOKINTEGRITY);
             System.exit(0);
         }
-        
+
         File file = new File(COUNTERS_FILE);
         List<String> lines = file.exists() ? Files.readAllLines(file.toPath()) : new ArrayList<>();
         boolean houseFound = false;
@@ -318,21 +322,19 @@ public class DataManager {
             }
         }
         if (!houseFound) lines.add(houseName + ";" + entry + ",");
-        
+
         Files.write(file.toPath(), lines);
         updateFileHash(COUNTERS_FILE);
     }
 
-    
     private static synchronized void securelyAddDeviceToHouse(String houseName, String deviceId) throws Exception {
         byte[] content = getDecryptedFileContent(HOUSES_FILE);
         List<String> lines = new ArrayList<>();
-        
+
         try (Scanner sc = new Scanner(new ByteArrayInputStream(content))) {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 if (line.startsWith(houseName + ";")) {
-                    
                     if (line.contains("devices:")) {
                         line = line.replaceFirst("devices:([^;]*)", "devices:$1," + deviceId);
                     } else {
@@ -342,7 +344,7 @@ public class DataManager {
                 lines.add(line);
             }
         }
-        
+
         encryptAndSaveFile(HOUSES_FILE, String.join(System.lineSeparator(), lines).getBytes());
     }
 
@@ -352,15 +354,11 @@ public class DataManager {
         }
         return line + ";perms:" + targetPerm;
     }
-    
+
     public static void saveUserCertificate(String userId, byte[] certBytes) throws IOException {
         String certPath = DATA_PATH + userId + ".cert";
         File certFile = new File(certPath);
-        
-       
         Files.write(certFile.toPath(), certBytes);
-        
-        
         try {
             updateFileHash(certPath);
         } catch (Exception e) {
@@ -368,77 +366,69 @@ public class DataManager {
         }
     }
 
-
     public static synchronized boolean userExists(String userId) {
-      
         if (!verifyFileIntegrity(USERS_FILE)) {
-            System.out.println(Protocol.NOKINTEGRITY); 
-            System.exit(0); 
+            System.out.println(Protocol.NOKINTEGRITY);
+            System.exit(0);
         }
-
         try (Scanner sc = new Scanner(new File(USERS_FILE))) {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 if (line.isEmpty()) continue;
-               
                 if (line.split(":")[0].equals(userId)) return true;
             }
-        } catch (IOException e) { 
-            return false; 
+        } catch (IOException e) {
+            return false;
         }
         return false;
     }
 
-    
     public static synchronized boolean deviceExists(String house, String device) {
-        
         if (device == null || device.length() < 2) return false;
-        
+
         String section = String.valueOf(device.charAt(0)).toUpperCase();
         File counterFile = new File(HOUSES_ROOT + house + "/" + section + "/counter.txt");
-        
+
         if (!counterFile.exists()) return false;
 
         try (Scanner sc = new Scanner(counterFile)) {
             int nextId = sc.hasNextInt() ? sc.nextInt() : 1;
-            
             int deviceNum = Integer.parseInt(device.substring(1));
             return deviceNum > 0 && deviceNum < nextId;
-        } catch (Exception e) { 
-            return false; 
+        } catch (Exception e) {
+            return false;
         }
     }
 
-    
     public static synchronized String updateDeviceState(String house, String device, String encryptedValue, String user) {
-        if (!houseExists(house)) return Protocol.NOHM; 
+        if (!houseExists(house)) return Protocol.NOHM;
 
         String section = String.valueOf(device.charAt(0)).toUpperCase();
-        
+
         if (!hasPermission(house, user, section)) {
-            return Protocol.NOPERM; 
+            return Protocol.NOPERM;
         }
-        
+
         if (!deviceExists(house, device)) {
-            return Protocol.NOD; 
+            return Protocol.NOD;
         }
 
         try {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
             String logEntry = String.format("%s, %s", timestamp, encryptedValue);
-            
+
             File logFile = new File(HOUSES_ROOT + house + "/" + section + "/" + device + ".csv");
 
             try (PrintWriter pw = new PrintWriter(new BufferedWriter(new FileWriter(logFile, true)))) {
                 pw.println(logEntry);
             }
-            
+
             updateFileHash(logFile.getPath());
             updateStatesFile(house, device, encryptedValue);
             return Protocol.OK;
-        } catch (Exception e) { 
+        } catch (Exception e) {
             e.printStackTrace();
-            return Protocol.NOK; 
+            return Protocol.NOK;
         }
     }
 
@@ -450,7 +440,9 @@ public class DataManager {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 if (line.startsWith(house + ";")) {
-                    if (line.contains("perms:" + user + ":" + section) || line.contains("perms:" + user + ":all")) return true;
+                    if (line.contains(","+user+":"+section+",") || line.contains(","+user+":"+section) ||
+                        line.contains("perms:"+user+":"+section+",") || line.contains("perms:"+user+":"+section) ||
+                        line.contains(","+user+":all") || line.contains("perms:"+user+":all")) return true;
                 }
             }
         } catch (Exception e) { return false; }
@@ -458,69 +450,54 @@ public class DataManager {
     }
 
     public static synchronized boolean hasAnyPermissionInHouse(String user, String house) {
-        
         if (isOwner(house, user)) return true;
 
         try {
-         
             byte[] decryptedContent = getDecryptedFileContent(HOUSES_FILE);
-            
-          
+
             if (!verifyFileIntegrity(HOUSES_FILE, decryptedContent)) {
-                System.out.println(Protocol.NOKINTEGRITY); 
-                System.exit(0); 
+                System.out.println(Protocol.NOKINTEGRITY);
+                System.exit(0);
             }
 
-           
             try (Scanner sc = new Scanner(new ByteArrayInputStream(decryptedContent))) {
                 while (sc.hasNextLine()) {
                     String line = sc.nextLine();
-                    
                     if (line.startsWith(house + ";")) {
-                        
-                        return line.contains(":" + user + ":") || line.contains("," + user + ":") || line.contains(":" + user + ",");
+                        String permsSection = "";
+                        int permsIdx = line.indexOf("perms:");
+                        if (permsIdx >= 0) permsSection = line.substring(permsIdx);
+                        return permsSection.contains(":"+user+":") || permsSection.contains(","+user+":");
                     }
                 }
             }
         } catch (Exception e) {
-           
             System.out.println(Protocol.NOKINTEGRITY);
             System.exit(0);
         }
         return false;
     }
 
-
-
-
-    
     public static synchronized File getFileForCommand(String user, String house, String device, String type) {
-        if (!houseExists(house)) return null; 
+        if (!houseExists(house)) return null;
 
-       
         if (type.equals("RH")) {
             String sectionLetter = String.valueOf(device.charAt(0)).toUpperCase();
-            String folderName = sectionLetter;
 
-            if (folderName == null) return null;
-           
             if (!hasPermission(house, user, sectionLetter)) return null;
 
-            File logFile = new File(HOUSES_ROOT + house + "/" + folderName + "/" + device + ".csv");
-            
+            File logFile = new File(HOUSES_ROOT + house + "/" + sectionLetter + "/" + device + ".csv");
+
             if (logFile.exists() && !verifyFileIntegrity(logFile.getPath())) {
                 System.out.println(Protocol.NOKINTEGRITY);
                 System.exit(0);
             }
-            
-            return logFile.exists() ? logFile : null; 
+
+            return logFile.exists() ? logFile : null;
         }
 
-      
         if (type.equals("RT")) {
-         
             if (hasAnyPermissionInHouse(user, house)) {
-              
                 return generateFilteredStatesFile(user, house);
             }
         }
@@ -530,9 +507,8 @@ public class DataManager {
 
     private static File generateFilteredStatesFile(String user, String house) {
         try {
-            
             if (!verifyFileIntegrity(STATES_FILE)) {
-                System.out.println(Protocol.NOKINTEGRITY); // 
+                System.out.println(Protocol.NOKINTEGRITY);
                 System.exit(0);
             }
 
@@ -550,20 +526,21 @@ public class DataManager {
                 boolean foundData = false;
                 while (sc.hasNextLine()) {
                     String line = sc.nextLine();
-                    if (line.startsWith(house + ":")) {
-                        String[] parts = line.split(":");
-                      
-                        for (int i = 1; i < parts.length; i += 2) {
-                            String deviceId = parts[i];
-                            String encryptedValue = parts[i+1]; 
-                            String section = String.valueOf(deviceId.charAt(0));
+                    if (line.trim().isEmpty()) continue;
 
-                           
-                            if (hasPermission(house, user, section)) {
-                                writer.println(deviceId + ":" + encryptedValue);
-                                foundData = true;
-                            }
-                        }
+                    String[] parts = line.split("\\|", 3);
+                    if (parts.length < 3) continue;
+
+                    String lineCasa      = parts[0];
+                    String deviceId      = parts[1];
+                    String encryptedValue = parts[2];
+
+                    if (!lineCasa.equals(house)) continue;
+
+                    String section = String.valueOf(deviceId.charAt(0)).toUpperCase();
+                    if (hasPermission(house, user, section)) {
+                        writer.println(deviceId + "|" + encryptedValue);
+                        foundData = true;
                     }
                 }
                 writer.close();
@@ -574,30 +551,27 @@ public class DataManager {
         }
     }
 
-    
     public static synchronized void updateStatesFile(String house, String device, String encryptedValue) throws Exception {
         File file = new File(STATES_FILE);
         List<String> lines = file.exists() ? Files.readAllLines(file.toPath()) : new ArrayList<>();
-        boolean houseFound = false;
+        boolean found = false;
 
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
-            if (line.startsWith(house + ":")) {
-                houseFound = true;
-                if (line.contains(device + ":")) {
-                    lines.set(i, line.replaceFirst(device + ":[^:]+", device + ":" + encryptedValue));
-                } else {
-                    lines.set(i, line + ":" + device + ":" + encryptedValue);
+            if (line.startsWith(house + "|")) {
+                String[] parts = line.split("\\|", 3);
+                if (parts.length >= 2 && parts[1].equals(device)) {
+                    lines.set(i, house + "|" + device + "|" + encryptedValue);
+                    found = true;
+                    break;
                 }
-                break;
             }
         }
-        if (!houseFound) lines.add(house + ":" + device + ":" + encryptedValue);
+        if (!found) lines.add(house + "|" + device + "|" + encryptedValue);
         Files.write(file.toPath(), lines);
         updateFileHash(STATES_FILE);
     }
 
-    
     public static byte[] getUserCertificate(String userId) throws IOException {
         File certFile = new File(DATA_PATH + userId + ".cert");
         if (!certFile.exists()) return null;
@@ -612,5 +586,4 @@ public class DataManager {
         } catch (Exception e) { return null; }
         return Files.readAllBytes(f.toPath());
     }
-    
 }
