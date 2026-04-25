@@ -26,6 +26,5 @@ keytool -genkey -alias $USER -keyalg RSA -keysize 2048 -keystore "$USER.keystore
 
 "SpertaClient:dist/SpertaClient.jar" | Out-File -FilePath server_data/app_attestation.txt -Encoding ascii
 
-Write-Host "--- TUDO PRONTO! ---" -ForegroundColor Green
 Write-Host "Para correr o servidor: java -jar dist/SpertaServer.jar $PORT $PBE_PASS server.keystore $PASS"
 Write-Host "Para correr o cliente:  java -jar dist/SpertaClient.jar localhost:$PORT client.truststore $PASS $USER.keystore $PASS $USER password123"
