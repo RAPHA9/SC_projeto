@@ -61,6 +61,10 @@ Exemplo:
 
 java -jar dist/SpertaClient.jar localhost:45678 client.truststore pass123 cliente1.keystore pass123 cliente1 password123
 
+Gerar keystore e certificados:
+keytool -genkeypair -alias cliente2 -keyalg RSA -keysize 2048 -validity 365 -keystore cliente2.keystore -storepass pass123 -keypass pass123 -dname "CN=cliente2"
+
+
 Se o utilizador não existir, será criado automaticamente e o seu certificado será enviado para o servidor.
 
 4. Comandos Disponíveis
