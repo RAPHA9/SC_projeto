@@ -31,6 +31,8 @@ jar cfe dist/SpertaClient.jar sperta.client.SpertaClient -C bin .
 
 Antes de executar o servidor e os clientes, pode ser usado o script build_and_run.ps1 para compilar o projeto, gerar os ficheiros JAR, criar keystores/truststores e configurar a atestação.
 
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+
 .\build_and_run.ps1
 
 3.2. Iniciar o Servidor
